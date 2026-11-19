@@ -57,7 +57,7 @@ flowchart TB
 | **Orchestrator** | `senior-fullstack` (grill + decision engine), ADHD output, Karpathy | — |
 | **Front-end Dev** | `senior-fullstack`, ADHD output, Karpathy | `ui-ux-pro-max`, `refactor` |
 | **Back-end Dev** | `senior-fullstack`, ADHD output, Karpathy | `sql-optimizer`, `refactor` |
-| **Reviewer** | `senior-fullstack` (`code_quality_analyzer`), ADHD output, Karpathy | — |
+| **Reviewer** | `senior-fullstack` (`code_quality_analyzer`), ADHD output, Karpathy | `security-review` (security-relevant diffs; always on the PR diff) |
 | **Tester** | `senior-fullstack` (testing strategy), ADHD output, Karpathy | — |
 
 Conditional skill triggers (whichever skill gets loaded, the agent must record the matching trigger in the Work Log):
@@ -65,6 +65,7 @@ Conditional skill triggers (whichever skill gets loaded, the agent must record t
 - **`ui-ux-pro-max` (FE):** new page or component, changes to layout, style, typography, or color, forms, navigation, animation, charts, accessibility, or a UI/UX finding. Skipped for pure logic.
 - **`sql-optimizer` (BE):** slow query or timeout, p95/p99 above target, a query on a large table or with JOIN + ORDER BY + LIMIT, or an N+1 pattern. `EXPLAIN ANALYZE` runs only on dev or a copy, never on production. A new index counts as a migration, so it needs approval.
 - **`refactor` (FE/BE):** an explicit refactor task, or code that must be changed but is too tangled. Tests must pass first. No behavior changes, and no rendered-output changes for FE. No commits. If the refactor is bigger than the feature, it becomes a separate task.
+- **`security-review` (Reviewer):** diffs touching auth or sessions, user input reaching SQL/shell/paths/templates, crypto or secrets, new endpoints that expose data, or HTML rendering. Always run on the PR diff. Only findings with confidence ≥ 8/10 are kept: HIGH becomes BLOCKER and MEDIUM becomes MAJOR. It never edits code.
 
 ---
 
@@ -86,7 +87,10 @@ flowchart TD
     T -- yes --> DN["6 · Task → done"]
     DN --> D2{"All tasks<br/>done?"}
     D2 -- "no → next task" --> W
-    D2 -- yes --> RP["7 · Final report (ADHD format)<br/><small>what now works · X/Y · evidence · 1 next action</small>"]
+    D2 -- yes --> BR["6a · Branch + pull origin<br/><small>conflicts fixed by owning role</small>"]
+    BR --> PR["6b · PR Review (Reviewer)<br/><small>gh pr diff + security-review · read-only</small>"]
+    PR -- findings --> F
+    PR -- "no open BLOCKER/MAJOR" --> RP["7 · Final report (ADHD format)<br/><small>what now works · X/Y · evidence · 1 next action</small>"]
     RP --> S(["STOP"])
 
     style F stroke:#a855f7,stroke-width:2px,stroke-dasharray:5 4
@@ -104,6 +108,23 @@ Every finding goes back to **the worker who did the task**. The Reviewer and Tes
 3. The Owner fixes each finding and marks it `[fixed]` with evidence, or `[wontfix]` with a reason. `wontfix` is allowed for MINOR only.
 4. The Reviewer re-reviews **only the listed findings and the fix diff**. A new finding is only allowed if the fix introduced it.
 5. Once everything is `[verified]`, the task goes to the Tester. A failing test follows the same loop with `[F-T03-n]` IDs.
+
+### Branch & sync
+
+- Work always happens on a feature branch (`<type>/<T-ID>-<slug>`), never on `main`. Creating the local branch needs no approval.
+- Before every PR and re-push, the Orchestrator runs `git fetch origin` and `git pull origin main` into the branch. No rebase or force-push without your approval.
+- A conflict goes to the role that owns the file: `FRONTEND_DIR` to Front-end, `BACKEND_DIR` to Back-end, `TEST_DIR` to Tester. Files outside any role go to you.
+- The fixing role only touches the conflict hunks in its own files, keeps both sides' intent, and runs its tests. Then the Tester re-runs the tests and the Reviewer re-reviews only the resolution diff.
+- `git reset --hard`, `git checkout -- <file>`, and `git push --force` are never used to make a conflict disappear.
+
+### PR Review (after a PR is opened)
+
+Once a PR exists, the Reviewer reads it with `gh pr diff` and **always** runs `security-review` on it.
+
+- Findings go back to the Owner through the same loop. Fixes are pushed to the PR branch only after your approval.
+- The Reviewer posts the result on the PR itself: one summary review plus an inline comment on the exact line of each finding. After a fix it posts a follow-up with the new status. It does not need your approval for this, and the comments contain no secrets and no AI attribution.
+- The Reviewer only posts `COMMENT` reviews. It **never approves, requests changes, or merges** the PR. That stays with you.
+- Maximum of 3 PR review rounds, then `blocked`.
 
 Maximum of **3 rounds** per task (review + test combined). Round 4 sets the task to `blocked` and escalates it to the human.
 
@@ -151,7 +172,7 @@ A worker may only change its own task's status in two ways: `todo → claimed` a
 | 2. Adding or upgrading dependencies | 2. Command fails 3× with the same error → stop |
 | 3. Schema, migrations, new indexes | 3. Goal, contract, or targets unclear → ask 1 question |
 | 4. CI/infra/env, scaffolder, `--persist` | 4. A claim without evidence = not done |
-| 5. `git commit` / `git push` (no `Co-Authored-By` or AI attribution) | 5. All done + evidence → report, **STOP** |
+| 5. `git commit` / `git push` (always from a feature branch, after pulling origin), open or merge a PR (the Reviewer's own review comments are the one exception; no `Co-Authored-By` or AI attribution) | 5. All done + evidence → report, **STOP** |
 
 ---
 
