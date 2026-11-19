@@ -3,8 +3,9 @@
 ## 0. Hard Rules (apply to EVERY agent, EVERY turn)
 - MUST read `.blackboard/BOARD.md` before acting and write your result to it before finishing. The board is the only source of truth; chat history is not.
 - MUST work only within your role's file scope (section 4). Need a change outside your scope → write it to `## Open Questions` and stop.
-- NEVER delete files, add/upgrade dependencies, change DB schema/migrations/indexes, edit CI/infra/env files, run the project scaffolder, or `git push`/`git commit` without human approval. Write the request to `## Approvals Needed` and stop.
+- NEVER delete files, add/upgrade dependencies, change DB schema/migrations/indexes, edit CI/infra/env files, run the project scaffolder, `git commit`/`git push`, or open or merge a PR without human approval. The only exception is the Reviewer posting its own review on a PR (3c). Write the request to `## Approvals Needed` and stop.
 - NEVER write secrets, tokens, or env values to the board or code.
+- ALWAYS work on a feature branch, never on `main`, and sync with origin before a PR. Rules in 3d.
 - Commits and PRs (only after approval) MUST NOT contain `Co-Authored-By` trailers or any AI/Claude attribution (no "Generated with" lines, no AI co-author). The human is the sole author.
 - Every "done"/"passing" claim MUST include evidence: the command run + an output summary. No evidence = not done.
 
@@ -82,6 +83,52 @@ Every review finding goes back to the worker who did the task. Only the Owner fi
 
 **Limits:** max 3 rounds per task (review + test combined). Round 4 → Orchestrator sets `blocked` and escalates to the human with the list of still-open findings.
 
+## 3c. PR Review (after a PR is opened)
+Trigger: a PR exists for the work. The human opens it, or the Orchestrator opens it after human approval (no `Co-Authored-By` or AI attribution in the title or body). The Reviewer reviews the PR BEFORE the final report.
+
+1. **Read the PR, read-only:** `gh pr view <n>` and `gh pr diff <n>`. Never push to or edit the PR branch.
+2. **Review the whole PR diff** with the Reviewer checks, and ALWAYS run `/security-review` on it.
+3. **Write findings** in `## Review Findings`: `[R-PR<n>-<k>][BLOCKER|MAJOR|MINOR][open] file:line — problem — fix`. The Orchestrator routes each one to the Owner by file scope (FRONTEND_DIR → FE, BACKEND_DIR → BE).
+4. **Fix Loop (3b) applies.** The Owner fixes, then pushes to the PR branch ONLY after human approval. The Reviewer re-reviews only the new commits and the listed findings, then posts a follow-up comment on the PR with each finding's new status (`verified` or still `open`).
+5. **Post the review on the PR** (no extra approval needed). Send ONE review per round as a `COMMENT`, with a summary plus an inline comment on the exact line of every finding:
+   `gh api repos/{owner}/{repo}/pulls/<n>/reviews --input <review.json>`
+   - `commit_id`: `gh pr view <n> --json headRefOid -q .headRefOid`; `event`: `"COMMENT"`.
+   - `body` (summary): verdict (`no open BLOCKER/MAJOR` or `N open findings`), counts per severity, skills used, tests/evidence checked. Max 5 bullets.
+   - `comments[]`: one per finding with `path`, `line`, `side: "RIGHT"`, and body `**[BLOCKER|MAJOR|MINOR] <category>** — problem — fix`. A finding on a line outside the diff goes in the summary instead.
+   - The body MUST contain no secrets and no AI attribution (no "Generated with", no co-author).
+   - Zero findings → post a short summary comment saying so.
+6. **NEVER approve, request changes on, or merge the PR** (use `COMMENT` only). Approving and merging is the human's.
+7. **Done:** all findings `[verified]` → write `[PR<n>] REVIEWED — no open BLOCKER/MAJOR` for the Orchestrator's final report.
+
+**Limit:** max 3 PR review rounds. Round 4 → `blocked`, escalate to the human with the open findings.
+
+## 3d. Branch & Sync
+**Branch first.** Never commit to or open a PR from `main`.
+1. Before the first change for a goal, the Orchestrator creates a local branch `<type>/<T-ID>-<slug>` from the up-to-date base (e.g. `feat/T-01-login`, `fix/T-04-null-token`). Creating a local branch needs no approval. Record the branch name in `## Decisions`.
+2. Already on `main` with changes? Stop, create the branch, and carry the changes over. Never commit to `main`.
+
+**Pull origin before every PR and before every re-push** (the Orchestrator runs this):
+1. `git fetch origin`, then `git pull origin main` into the feature branch (merge). NEVER rebase or force-push without human approval.
+2. No conflicts → continue. Log `pulled origin/main, no conflicts` in the Work Log.
+3. Conflicts → list them with `git diff --name-only --diff-filter=U` and open one `conflict` task per owner in `## Tasks`.
+
+**Conflicts are fixed by the role that owns the files:**
+| Conflicted file lives in | Fixed by |
+|---|---|
+| `[FRONTEND_DIR]/**` | Front-end Developer |
+| `[BACKEND_DIR]/**` | Back-end Developer |
+| `[TEST_DIR]/**` | Tester |
+| anywhere else (config, CI, lockfiles, `.blackboard/`) | nobody — write to `## Approvals Needed` for the human |
+
+Rules for the fixing role:
+1. Touch ONLY the conflict hunks in your own files. No unrelated edits.
+2. Keep the intent of BOTH sides. Never drop the other side's change without a written reason in the Work Log.
+3. Run your lint/test commands after resolving and record the evidence.
+4. NEVER use `git reset --hard`, `git checkout -- <file>`, `git push --force`, or any history rewrite to make a conflict go away.
+5. The merge commit and the push need human approval (Hard Rules).
+
+**After resolution:** the Tester re-runs the tests, and the Reviewer re-reviews ONLY the conflict-resolution diff (3b loop applies). Then the PR can be opened.
+
 ## 4. Roles
 
 ### Orchestrator
@@ -94,11 +141,14 @@ Every review finding goes back to the worker who did the task. Only the Owner fi
   4. After submit: Reviewer → any finding → run the Review → Fix Loop (3b) back to the Owner → all findings `[verified]` → Tester → any failure → same loop → all pass → `done`.
   4b. When dispatching a fix, include the skill hint: BE query performance → `sql-optimizer`; UI/UX/a11y → `ui-ux-pro-max`; tangled code → `refactor`. A refactor bigger than the feature → create a separate task for the same role with the description "refactor: <target>".
   5. Answer `## Open Questions` resolvable from the board/code; escalate the rest to the human.
+  5b. Branch & Sync (3d): confirm the work is on a feature branch; before a PR, pull origin and dispatch each conflict to the role that owns the file.
+  6. A PR exists (opened with human approval, from a feature branch) → dispatch the Reviewer for PR Review (3c) BEFORE the final report. Include the PR result in the report.
 - **Final report to the human (ADHD format):** first line = what now works + how to try it; then task status `X/Y done`; changed files (max 5, rest grouped); test evidence; ONE next action.
 
 ### Front-end Developer
 - **Scope:** `[FRONTEND_DIR]/**` only.
 - **Input:** a `claimed` FE task + `## Contracts`.
+- **Conflicts:** you fix merge conflicts in `[FRONTEND_DIR]/**` only, per 3d.
 - **senior-fullstack use:** frontend component patterns in `architecture_patterns.md`; perf targets (LCP/INP/CLS) from `## Goal`; common issues (bundle size/lazy load, strict TS, CORS).
 - **Rules:** consume the API strictly per contract; never invent endpoints or fields. Contract insufficient → Open Questions. Reuse existing components/patterns before creating new ones.
 
@@ -141,6 +191,7 @@ How to use it — these rules OVERRIDE the skill's defaults:
 ### Back-end Developer
 - **Scope:** `[BACKEND_DIR]/**` only, excluding migrations/schema (approval required).
 - **Input:** a `claimed` BE task + `## Contracts`.
+- **Conflicts:** you fix merge conflicts in `[BACKEND_DIR]/**` only, per 3d.
 - **senior-fullstack use:** backend + API patterns in `architecture_patterns.md` (follow whichever the codebase already uses; do not introduce new layers); latency target from `## Goal`; common issues (N+1 → eager loading/DataLoader, CORS middleware).
 - **Rules:** implement exactly what the contract says, incl. error codes. Validate input at the boundary only. No error handling for impossible cases.
 
@@ -175,14 +226,34 @@ How to use it — these rules OVERRIDE the skill's defaults:
 - **Output:** Work Log entry (result first, files, endpoints, skills loaded + trigger, evidence: `[BE_LINT_CMD]`, `[BE_TEST_CMD]` output, plus EXPLAIN before/after if sql-optimizer was used), status → `in_review`.
 
 ### Reviewer
-- **Scope:** read-only across the whole repo. NEVER edits code.
+- **Scope:** read-only across the whole repo and PRs. NEVER edits code. The one allowed external write is posting its own review on a PR (3c).
 - NEVER fix code yourself. Every finding goes back to the Owner via the Review → Fix Loop (3b).
 - **senior-fullstack use:** run `python3 ~/.claude/skills/senior-fullstack/scripts/code_quality_analyzer.py <changed dir> --verbose`. Any P0/critical security finding in changed code = BLOCKER. Findings in untouched code → Open Questions, not a blocker.
 - **Checks, in order:** (1) correctness vs acceptance + contract, (2) security (injection, authz, secret leaks), (3) every changed line traces to the task / no scope creep, (4) needless complexity, (5) common-issues checklist, (6) consistency with existing style.
+
+#### Conditional skill — load ONLY when a trigger matches
+In the review entry, state which skill you loaded and which trigger matched (e.g. `skill: security-review — trigger: new auth endpoint`).
+
+**`/security-review`** — load when at least one is true:
+1. The diff touches authentication, authorization, sessions, or JWT.
+2. The diff handles user input that reaches SQL, a shell, a file path, a template, or a deserializer.
+3. The diff touches crypto, secrets handling, or adds a new endpoint or a response that can expose data.
+4. The diff renders user content as HTML (XSS) or loads/executes dynamic code.
+5. A PR exists for the work → ALWAYS run it on the PR diff (see 3c).
+Skip it for pure styling, docs, or test-only diffs.
+
+How to use it — these rules shape its output to this board:
+1. Review only what the diff adds. Pre-existing issues → `## Open Questions`, not findings.
+2. Report only findings with confidence ≥ 8/10. Skip DoS, rate limiting, secrets-on-disk, and doc/markdown-only issues.
+3. Map severity: HIGH → `BLOCKER`, MEDIUM → `MAJOR`. Drop LOW.
+4. Write each as a 3b finding with a category slug: `[R-<T-ID>-<n>][BLOCKER|MAJOR][open] file:line — <category>: description — exploit scenario — fix`.
+5. Stay read-only: do not run the exploit, do not write files, do not touch the code.
+
 - **Output:** findings in `## Review Findings` using the 3b format, max 5 per task ranked by severity. Any finding → recommend `changes_requested`. Otherwise `[T-ID] APPROVED`. No style-preference findings without concrete impact.
 
 ### Tester
 - **Scope:** `[TEST_DIR]/**` and running test commands. NEVER edits application code.
+- **Conflicts:** you fix merge conflicts in `[TEST_DIR]/**` only, per 3d.
 - NEVER fix code yourself. Every failure goes back to the Owner via the Review → Fix Loop (3b).
 - **senior-fullstack use:** testing strategy (unit / integration / E2E) per `development_workflows.md` — pick the lowest level that proves the acceptance criterion. Check the numeric targets from `## Goal` when the task affects them and a measurement command exists.
 - **Steps:** write/extend tests proving the acceptance criteria incl. main negative/edge cases. Run `[TEST_CMD]`.
