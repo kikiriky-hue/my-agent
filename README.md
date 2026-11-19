@@ -6,7 +6,9 @@ Built-in principles:
 - **Karpathy guidelines:** think first, keep it simple, make targeted changes, work from verifiable goals.
 - **Proof before "done":** every claim of done or passing must include the command and its output.
 - **ADHD-friendly output:** the next action comes first, state is restated as `X/Y`, lists have at most 5 items, and every message ends with one concrete action.
-- **Human approval** is required for risky actions such as deleting files, adding dependencies, changing schemas or migrations, or commit/push.
+- **Security and PR review:** the Reviewer runs `security-review` on risky diffs, always on the PR diff, and posts its findings on the PR as comments.
+- **Branch discipline:** work happens on a feature branch, origin is pulled before every PR, and merge conflicts are fixed by the role that owns the files.
+- **Human approval** is required for risky actions such as deleting files, adding dependencies, changing schemas or migrations, commit/push, or opening and merging a PR.
 
 ---
 
@@ -29,7 +31,7 @@ flowchart TB
     B[("📋 Blackboard<br/>.blackboard/BOARD.md<br/><small>Goal · Assumptions · Contracts · Tasks · Work Log<br/>Review Findings · Test Results · Open Questions<br/>Approvals Needed · Decisions</small>")]
     FE["🎨 Front-end Dev<br/><small>scope: FRONTEND_DIR</small>"]
     BE["⚙️ Back-end Dev<br/><small>scope: BACKEND_DIR (no migrations)</small>"]
-    RV["🔍 Reviewer<br/><small>read-only · never fixes</small>"]
+    RV["🔍 Reviewer<br/><small>read-only · never fixes · posts PR review comments</small>"]
     TS["🧪 Tester<br/><small>scope: TEST_DIR · never edits app code</small>"]
 
     H -- goal --> O
@@ -77,7 +79,7 @@ flowchart TD
     D1 -- not yet --> G["Grill 7 questions<br/><small>1 per message + decision engine</small>"]
     G --> P
     D1 -- yes --> P["2 · Plan<br/><small>Goal + 3 numeric targets · Contracts · Tasks</small>"]
-    P --> W["3 · Dispatch FE + BE (parallel)<br/><small>claim → check skill triggers → do work → Work Log</small>"]
+    P --> W["3 · Dispatch FE + BE (parallel)<br/><small>on a feature branch · claim → check skill triggers → do work → Work Log</small>"]
     W --> R{"4 · Reviewer:<br/>any findings?"}
     R -- yes --> F["Fix Loop → Owner<br/><small>open → fixed → verified</small>"]
     R -- "no / all verified" --> T{"5 · Tester:<br/>all passing?"}
@@ -87,8 +89,9 @@ flowchart TD
     T -- yes --> DN["6 · Task → done"]
     DN --> D2{"All tasks<br/>done?"}
     D2 -- "no → next task" --> W
-    D2 -- yes --> BR["6a · Branch + pull origin<br/><small>conflicts fixed by owning role</small>"]
-    BR --> PR["6b · PR Review (Reviewer)<br/><small>gh pr diff + security-review · read-only</small>"]
+    D2 -- yes --> BR["6a · Pull origin<br/><small>conflicts fixed by owning role</small>"]
+    BR --> OP["6b · Open PR<br/><small>needs your approval</small>"]
+    OP --> PR["6c · PR Review (Reviewer)<br/><small>gh pr diff + security-review · posts COMMENT review</small>"]
     PR -- findings --> F
     PR -- "no open BLOCKER/MAJOR" --> RP["7 · Final report (ADHD format)<br/><small>what now works · X/Y · evidence · 1 next action</small>"]
     RP --> S(["STOP"])
@@ -109,6 +112,8 @@ Every finding goes back to **the worker who did the task**. The Reviewer and Tes
 4. The Reviewer re-reviews **only the listed findings and the fix diff**. A new finding is only allowed if the fix introduced it.
 5. Once everything is `[verified]`, the task goes to the Tester. A failing test follows the same loop with `[F-T03-n]` IDs.
 
+Maximum of **3 rounds** per task (review + test combined). Round 4 sets the task to `blocked` and escalates it to the human.
+
 ### Branch & sync
 
 - Work always happens on a feature branch (`<type>/<T-ID>-<slug>`), never on `main`. Creating the local branch needs no approval.
@@ -119,14 +124,12 @@ Every finding goes back to **the worker who did the task**. The Reviewer and Tes
 
 ### PR Review (after a PR is opened)
 
-Once a PR exists, the Reviewer reads it with `gh pr diff` and **always** runs `security-review` on it.
+Once a PR exists, the Reviewer reads it with `gh pr diff` and **always** runs `security-review` on it. PR findings use IDs like `[R-PR12-1]`.
 
 - Findings go back to the Owner through the same loop. Fixes are pushed to the PR branch only after your approval.
 - The Reviewer posts the result on the PR itself: one summary review plus an inline comment on the exact line of each finding. After a fix it posts a follow-up with the new status. It does not need your approval for this, and the comments contain no secrets and no AI attribution.
 - The Reviewer only posts `COMMENT` reviews. It **never approves, requests changes, or merges** the PR. That stays with you.
 - Maximum of 3 PR review rounds, then `blocked`.
-
-Maximum of **3 rounds** per task (review + test combined). Round 4 sets the task to `blocked` and escalates it to the human.
 
 ---
 
@@ -180,7 +183,8 @@ A worker may only change its own task's status in two ways: `todo → claimed` a
 
 1. Copy `AGENTS.md`, `CLAUDE.md`, and `.blackboard/BOARD.md` to the root of your project repo.
 2. In `AGENTS.md`, replace the placeholders `[FRONTEND_DIR]`, `[BACKEND_DIR]`, `[TEST_DIR]`, `[TEST_CMD]`, `[FE_LINT_CMD]`, `[FE_TEST_CMD]`, `[FE_BUILD_CMD]`, `[BE_LINT_CMD]`, and `[BE_TEST_CMD]`.
-3. Make sure these skills are installed in `~/.claude/skills/`: `senior-fullstack`, `ui-ux-pro-max`, `sql-optimizer`, `refactor`. Karpathy guidelines and the ADHD output style are already written into `AGENTS.md`.
-4. Open Claude Code in the project, then give it a goal. For example: *"Act as the Orchestrator per AGENTS.md. Goal: add a login page with an email + password API."*
+3. Make sure these skills are installed in `~/.claude/skills/`: `senior-fullstack`, `ui-ux-pro-max`, `sql-optimizer`, `refactor`. `security-review` comes with Claude Code. Karpathy guidelines and the ADHD output style are already written into `AGENTS.md`.
+4. For PR review, install the GitHub CLI and log in with `gh auth login`. The Reviewer reads and comments on PRs through `gh`, so comments appear under that account.
+5. Open Claude Code in the project, then give it a goal. For example: *"Act as the Orchestrator per AGENTS.md. Goal: add a login page with an email + password API."*
 
 > ⚠️ This setup runs agents with real access to your filesystem and terminal. Before using it, check the scope of each role, the actions that require approval, and the stop conditions.
