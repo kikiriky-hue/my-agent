@@ -1,7 +1,16 @@
 {
+  "base_branch": "main",
   "frontend_dirs": ["[FRONTEND_DIR]"],
   "backend_dirs": ["[BACKEND_DIR]"],
   "test_dirs": ["[TEST_DIR]"],
   "migration_dirs": ["[MIGRATIONS_DIR]"],
-  "test_globs": ["*.test.*", "*.spec.*", "test_*.py", "*_test.py", "*_test.go", "*/__tests__/*", "__tests__/*"]
+  "test_globs": ["*.test.*", "*.spec.*", "test_*.py", "*_test.py", "*_test.go", "*/__tests__/*", "__tests__/*"],
+  "commands": {
+    "TEST_CMD": "[TEST_CMD]",
+    "FE_LINT_CMD": "[FE_LINT_CMD]",
+    "FE_TEST_CMD": "[FE_TEST_CMD]",
+    "FE_BUILD_CMD": "[FE_BUILD_CMD]",
+    "BE_LINT_CMD": "[BE_LINT_CMD]",
+    "BE_TEST_CMD": "[BE_TEST_CMD]"
+  }
 }
