@@ -1,11 +1,13 @@
 # AGENTS.md — Orchestrator-Worker with Blackboard
 
+**Project config.** This file is identical in every project. Bracketed tokens such as `[FRONTEND_DIR]`, `[BASE_BRANCH]`, and `[TEST_CMD]` are keys in `.claude/scope.json` (`frontend_dirs`, `base_branch`, `commands.TEST_CMD`, and so on). Read that file to resolve them. A token whose value is still a bracketed placeholder → ask the human before continuing.
+
 ## 0. Hard Rules (apply to EVERY agent, EVERY turn)
 - MUST read `.blackboard/BOARD.md` and your task file before acting, and write your result to your task file before finishing (only the Orchestrator writes `BOARD.md`; see 3). The board is the only source of truth; chat history is not.
 - MUST work only within your role's file scope (section 4). Need a change outside your scope → write it to `## Open Questions` and stop.
 - NEVER delete files, add/upgrade dependencies, change DB schema/migrations/indexes, edit CI/infra/env files, run the project scaffolder, `git commit`/`git push`, or open or merge a PR without human approval. Exceptions: the Reviewer posting its own review on a PR (3c), and local per-task commits on the feature branch covered by the standing approval (3e). Pushing always needs approval. Write the request to `## Approvals Needed` and stop.
 - NEVER write secrets, tokens, or env values to the board or code.
-- ALWAYS work on a feature branch, never on `main`, and sync with origin before a PR. Rules in 3d.
+- ALWAYS work on a feature branch, never on `[BASE_BRANCH]`, and sync with origin before a PR. Rules in 3d.
 - Commits and PRs (only after approval) MUST NOT contain `Co-Authored-By` trailers or any AI/Claude attribution (no "Generated with" lines, no AI co-author). The human is the sole author.
 - Every "done"/"passing" claim MUST include evidence: the command run + an output summary. No evidence = not done.
 
@@ -18,10 +20,10 @@
 ## 2. Shared Skills (ALL roles)
 
 ### 2a. senior-fullstack — engineering standard
-Skill root: `~/.claude/skills/senior-fullstack/`. Every role MUST load it (`Skill: senior-fullstack`) at the start of its first task and apply only the parts mapped to its role in section 4.
+Skill root: `~/.claude/skills/senior-fullstack/`. A skill named in this file that is not installed → note it in `## Open Questions` and continue without it. Every role MUST load it (`Skill: senior-fullstack`) at the start of its first task and apply only the parts mapped to its role in section 4.
 - References: `references/architecture_patterns.md`, `references/development_workflows.md`, `references/tech_stack_guide.md`, `references/forcing_questions.md`.
 - Tools: `scripts/fullstack_decision_engine.py` (stack/profile pick), `scripts/code_quality_analyzer.py` (quality/security audit), `scripts/project_scaffolder.py` (APPROVAL REQUIRED — creates files and dependencies).
-- Verifiable targets: `## Goal` MUST contain three numeric targets — API latency (p50/p95/p99 ms), frontend perf (LCP/INP/CLS on mobile-4G), uptime/SLO. Missing → Orchestrator asks the human before any FE/BE task starts.
+- Verifiable targets: `## Goal` MUST contain three numeric targets — API latency (p50/p95/p99 ms), frontend perf (LCP/INP/CLS on mobile-4G), uptime/SLO. Missing → Orchestrator asks the human before any FE/BE task starts. A target that does not apply (no UI, a script, a small bug fix) is written as `N/A — <reason>` and confirmed by the human.
 - The skill's common-issues table (N+1 queries, CORS, strict TS, bundle size) is a mandatory checklist for FE, BE, and Reviewer.
 
 ### 2b. ADHD output style — for every board entry and every message to the human
@@ -115,13 +117,13 @@ Trigger: a PR exists for the work. The human opens it, or the Orchestrator opens
 **Limit:** max 3 PR review rounds. Round 4 → `blocked`, escalate to the human with the open findings.
 
 ## 3d. Branch & Sync
-**Branch first.** Never commit to or open a PR from `main`.
+**Branch first.** Never commit to or open a PR from `[BASE_BRANCH]`.
 1. Before the first change for a goal, the Orchestrator creates a local branch `<type>/<T-ID>-<slug>` from the up-to-date base (e.g. `feat/T-01-login`, `fix/T-04-null-token`). Creating a local branch needs no approval. Record the branch name in `## Decisions`.
-2. Already on `main` with changes? Stop, create the branch, and carry the changes over. Never commit to `main`.
+2. Already on `[BASE_BRANCH]` with changes? Stop, create the branch, and carry the changes over. Never commit to `[BASE_BRANCH]`.
 
 **Pull origin before every PR and before every re-push** (the Orchestrator runs this):
-1. `git fetch origin`, then `git pull origin main` into the feature branch (merge). NEVER rebase or force-push without human approval.
-2. No conflicts → continue. Log `pulled origin/main, no conflicts` in the Work Log.
+1. `git fetch origin`, then `git pull origin [BASE_BRANCH]` into the feature branch (merge). NEVER rebase or force-push without human approval.
+2. No conflicts → continue. Log `pulled origin/[BASE_BRANCH], no conflicts` in the Work Log.
 3. Conflicts → list them with `git diff --name-only --diff-filter=U` and open one `conflict` task per owner in `## Tasks`.
 
 **Conflicts are fixed by the role that owns the files:**
