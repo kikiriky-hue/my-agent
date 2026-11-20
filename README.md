@@ -24,7 +24,6 @@ Built-in principles:
 | [`.claude/settings.json`](.claude/settings.json) | Registers the guard hook |
 | [`.claude/hooks/guard.py`](.claude/hooks/guard.py) | Enforces scope, approvals, and no-attribution rules before each tool call |
 | [`.claude/scope.json`](.claude/scope.json) | The only project-specific file: base branch, directories each role may write, test/lint/build commands |
-| [`docs/how-it-works.html`](docs/how-it-works.html) | Visual walkthrough of the team, the workflow, and the guard (download and open in a browser; GitHub shows the source) |
 | [`install.py`](install.py) | Installs or updates the team in another project without overwriting your files |
 | [`.gitignore`](.gitignore) | Keeps the live board, task files, and archive out of git |
 
