@@ -1,9 +1,9 @@
 # AGENTS.md — Orchestrator-Worker with Blackboard
 
 ## 0. Hard Rules (apply to EVERY agent, EVERY turn)
-- MUST read `.blackboard/BOARD.md` before acting and write your result to it before finishing. The board is the only source of truth; chat history is not.
+- MUST read `.blackboard/BOARD.md` and your task file before acting, and write your result to your task file before finishing (only the Orchestrator writes `BOARD.md`; see 3). The board is the only source of truth; chat history is not.
 - MUST work only within your role's file scope (section 4). Need a change outside your scope → write it to `## Open Questions` and stop.
-- NEVER delete files, add/upgrade dependencies, change DB schema/migrations/indexes, edit CI/infra/env files, run the project scaffolder, `git commit`/`git push`, or open or merge a PR without human approval. The only exception is the Reviewer posting its own review on a PR (3c). Write the request to `## Approvals Needed` and stop.
+- NEVER delete files, add/upgrade dependencies, change DB schema/migrations/indexes, edit CI/infra/env files, run the project scaffolder, `git commit`/`git push`, or open or merge a PR without human approval. Exceptions: the Reviewer posting its own review on a PR (3c), and local per-task commits on the feature branch covered by the standing approval (3e). Pushing always needs approval. Write the request to `## Approvals Needed` and stop.
 - NEVER write secrets, tokens, or env values to the board or code.
 - ALWAYS work on a feature branch, never on `main`, and sync with origin before a PR. Rules in 3d.
 - Commits and PRs (only after approval) MUST NOT contain `Co-Authored-By` trailers or any AI/Claude attribution (no "Generated with" lines, no AI co-author). The human is the sole author.
@@ -38,25 +38,37 @@ The reader has ADHD. Shape output so it can be acted on immediately:
 
 Exceptions: destructive actions → confirm first (safety beats brevity). Same failure 3 turns in a row → stop, name the assumption that may be wrong, ask one diagnostic question.
 
-## 3. Blackboard Protocol — `.blackboard/BOARD.md`
+## 3. Blackboard Protocol — `.blackboard/`
+Layout (`BOARD.md`, `tasks/`, `archive/` are git-ignored; only the two templates are committed):
+- `BOARD.md` — shared state. ONLY the Orchestrator writes it. Everyone reads it.
+- `tasks/<T-ID>.md` — one file per task, created by the Orchestrator from `TASK.template.md`. Written only by the roles working that task. They run one after another (worker → Reviewer → Tester), so no two agents write the same file. PR reviews use `tasks/PR-<n>.md`; conflict tasks use their own ID.
+- `BOARD.template.md`, `TASK.template.md` — committed templates. New goal → move the old `BOARD.md` and `tasks/` to `archive/<date>-<slug>/`, then copy the templates.
+
+In this file, `## Work Log`, `## Review Findings`, `## Test Results`, `## Assumptions`, `## Open Questions`, and `## Approvals Needed` mean that section **of your task file**. The Orchestrator mirrors every Open Question and Approval into `BOARD.md`, plus every status change into the Tasks table.
+
 Fixed structure. No new sections without the Orchestrator.
 
 ```
-## Goal                 (Orchestrator) user goal + definition of done + 3 numeric targets (2a)
-## Assumptions          (all, append-only) - [role] assumption
-## Contracts            (Orchestrator) API: method, path, request, response, error codes
-## Tasks                (status changed ONLY by Orchestrator, except claim/submit)
-| ID | Role | Description | Depends | Acceptance (verifiable) | Est. | Status | Owner |
-## Work Log             (workers, append-only) - [T-ID][role] result first, files, evidence
+BOARD.md — written ONLY by the Orchestrator
+## Goal                 user goal + definition of done + 3 numeric targets (2a)
+## Contracts            API: method, path, request, response, error codes
+## Tasks                | ID | Role | Description | Depends | Acceptance (verifiable) | Est. | Status | Owner |
+## Open Questions       mirrored - [role][T-ID] question, blocked task
+## Approvals Needed     mirrored - [role][T-ID] action needing human approval + reason
+## Decisions            (append-only) decision + reason
+
+tasks/<T-ID>.md — written by the roles working that task
+Status: todo | claimed | in_review | in_test | changes_requested | done | blocked
+## Assumptions          (append-only) - [role] assumption
+## Work Log             (append-only) - [role] result first, files, commit SHA, evidence
 ## Review Findings      (Reviewer, append-only) - see 3b for format
-## Test Results         (Tester, append-only) - [T-ID] command, pass/fail, failures as F-IDs
-## Open Questions       (all) - [role] question, blocked task
-## Approvals Needed     (all) - [role] action needing human approval + reason
-## Decisions            (Orchestrator, append-only) - decision + reason
+## Test Results         (Tester, append-only) - command, pass/fail, failures as F-IDs
+## Open Questions       [role] question
+## Approvals Needed     [role] action needing human approval + reason
 ```
 
 **Status flow:** `todo → claimed → in_review → in_test → done`, or `→ changes_requested → claimed`, or `→ blocked`.
-- A worker MAY only move its own task `todo → claimed` (fill Owner) and `claimed → in_review` (after writing the Work Log).
+- A worker MAY only change the `Status:` line of its own task file: `todo → claimed` (fill Owner) and `claimed → in_review` (after writing the Work Log and committing, 3e). The Orchestrator mirrors every status into the Tasks table and makes all other status changes.
 - NEVER claim a task whose `Depends` are not all `done`.
 - Never delete or rewrite another role's entries. Append only (finding status tags in 3b are the only in-place edit).
 
@@ -118,7 +130,7 @@ Trigger: a PR exists for the work. The human opens it, or the Orchestrator opens
 | `[FRONTEND_DIR]/**` | Front-end Developer |
 | `[BACKEND_DIR]/**` | Back-end Developer |
 | `[TEST_DIR]/**` | Tester |
-| anywhere else (config, CI, lockfiles, `.blackboard/`) | nobody — write to `## Approvals Needed` for the human |
+| anywhere else (config, CI, lockfiles, `.blackboard/*.template.md`) | nobody — write to `## Approvals Needed` for the human |
 
 Rules for the fixing role:
 1. Touch ONLY the conflict hunks in your own files. No unrelated edits.
@@ -129,6 +141,28 @@ Rules for the fixing role:
 
 **After resolution:** the Tester re-runs the tests, and the Reviewer re-reviews ONLY the conflict-resolution diff (3b loop applies). Then the PR can be opened.
 
+## 3e. Commits per task
+Why: the Reviewer needs one task's diff, not the whole working tree, and parallel FE/BE work must not get mixed.
+
+**Standing approval.** At plan time the Orchestrator asks the human ONCE (Orchestrator step 1b). If granted, local commits on the feature branch are allowed without asking each time. Pushing, opening a PR, and amending or rewriting commits are NEVER covered.
+
+1. A worker commits at `claimed → in_review`: stage ONLY the files of its own task by path (`git add <paths>`, never `git add -A` or `git add .`), message `T-<ID>: <description>`. No `Co-Authored-By` or AI attribution. Record the SHA in `## Work Log`.
+2. A fix for a finding is a NEW commit: `T-<ID>: fix R-<T-ID>-<n>`. Never amend an earlier commit.
+3. The Reviewer reviews `git show <sha>` (first review) or `git diff <previous-sha>..<fix-sha>` (re-review). The Tester runs the tests on the branch HEAD.
+4. Parallel workers share one working tree: each stages only its own paths, and `git status` MUST show no other role's files in its commit. A file needed by two tasks → the Orchestrator orders them with `Depends`.
+5. No standing approval → workers leave changes uncommitted and list the exact files in `## Work Log`. The Reviewer then uses `git diff -- <those files>`.
+6. `.blackboard/` is git-ignored. NEVER stage it.
+
+## 3f. Enforcement (agents + hooks)
+Rules that only exist as text get ignored under pressure, so the important ones are enforced:
+- **Role agents:** `.claude/agents/{orchestrator,frontend-dev,backend-dev,reviewer,tester}.md`. The Orchestrator runs as the main thread (`claude --agent orchestrator`) and can only spawn the four workers. Workers cannot spawn agents.
+- **Guard hook:** `.claude/settings.json` runs `.claude/hooks/guard.py` before every Edit/Write/Bash. It acts only for these five roles. Scope comes from `.claude/scope.json` (fill it in, together with the placeholders in this file). An unconfigured scope blocks the worker.
+- **Denied** (the call fails and the agent is told why): writing outside your scope or into another role's files; the Orchestrator writing application code; the Reviewer writing anything except its task file; `git reset --hard`, `git checkout -- <file>`, `git clean`; `git add -A` / `.` / `-u` and staging `.blackboard/`; `Co-Authored-By` or "Generated with" in a commit, PR, or comment; `gh pr merge`; approving or requesting changes on a PR; a non-Reviewer posting PR reviews; `--force` on ui-ux-pro-max.
+- **Asks the human:** `git push` (also force), `gh pr create`, rebase/amend, deleting files, adding or changing dependencies, migration commands, writing into the migrations directory or a dependency manifest or CI/infra/env file inside your scope, scaffolder, `--persist`.
+- **A blocked call is final for that action.** Do not retry it, rephrase it, or reach the same result another way (for example writing a file through `Bash`). Record it in `## Open Questions` or `## Approvals Needed` and stop.
+- **File ownership:** test files (`*.test.*`, `*.spec.*`, `__tests__/`, and the test directories) belong to the Tester wherever they live; FE and BE never edit them. Migrations: BE drafts the SQL in `## Approvals Needed`, and only the human approves writing it into the migrations directory.
+- The Bash checks are best-effort hardening, not a sandbox. Table test: `python3 .claude/hooks/test_guard.py`.
+
 ## 4. Roles
 
 ### Orchestrator
@@ -136,8 +170,9 @@ Rules for the fixing role:
 - **senior-fullstack use:** if the stack/architecture is undecided, walk `references/forcing_questions.md` with the human — ONE question per message, with a recommended answer. Then run `scripts/fullstack_decision_engine.py` with the answers and log the profile + reason in `## Decisions`. Existing project with a settled stack → skip the grill and record the existing stack in `## Decisions`.
 - **Steps:**
   1. Fill `## Goal` incl. the 3 numeric targets; split the work into small tasks with verifiable acceptance criteria and a time estimate.
+  1b. Ask the human ONCE for standing approval for local per-task commits on the feature branch (3e). Record the answer in `## Decisions`. Pushing is never covered.
   2. Write `## Contracts` BEFORE any FE/BE task starts. Contract changes only via the Orchestrator, logged in `## Decisions`.
-  3. Dispatch workers through subagents, one task per dispatch. Run FE and BE in parallel only when independent.
+  3. Create `.blackboard/tasks/<T-ID>.md` from `TASK.template.md` for each task, then dispatch workers through subagents, one task per dispatch. Run FE and BE in parallel only when independent.
   4. After submit: Reviewer → any finding → run the Review → Fix Loop (3b) back to the Owner → all findings `[verified]` → Tester → any failure → same loop → all pass → `done`.
   4b. When dispatching a fix, include the skill hint: BE query performance → `sql-optimizer`; UI/UX/a11y → `ui-ux-pro-max`; tangled code → `refactor`. A refactor bigger than the feature → create a separate task for the same role with the description "refactor: <target>".
   5. Answer `## Open Questions` resolvable from the board/code; escalate the rest to the human.
@@ -146,7 +181,7 @@ Rules for the fixing role:
 - **Final report to the human (ADHD format):** first line = what now works + how to try it; then task status `X/Y done`; changed files (max 5, rest grouped); test evidence; ONE next action.
 
 ### Front-end Developer
-- **Scope:** `[FRONTEND_DIR]/**` only.
+- **Scope:** `[FRONTEND_DIR]/**` and your own task file. Never edit test files (see 3f); ask the Tester via `## Open Questions`.
 - **Input:** a `claimed` FE task + `## Contracts`.
 - **Conflicts:** you fix merge conflicts in `[FRONTEND_DIR]/**` only, per 3d.
 - **senior-fullstack use:** frontend component patterns in `architecture_patterns.md`; perf targets (LCP/INP/CLS) from `## Goal`; common issues (bundle size/lazy load, strict TS, CORS).
@@ -182,14 +217,14 @@ How to use it — these rules OVERRIDE the skill's defaults:
 2. Touch only files listed in the task. Do not change component public props/exports or the API contract.
 3. Never change behavior **or rendered output**: same markup semantics, styles, and interactions. Run `[FE_TEST_CMD]` and `[FE_BUILD_CMD]` after each step and record the result.
 4. Extract a component only when it is used in 2+ places within this task. No speculative "reusable" abstractions.
-5. NEVER commit (the skill's "atomic commits" step is disabled here; see Hard Rules).
+5. Make no separate refactor commits (the skill's "atomic commits" step is disabled here). Your changes go into the task's commit (3e).
 6. Delete dead code only if YOUR change made it dead. Report other dead code in `## Open Questions`.
 7. Refactor is bigger than the feature change itself → stop and ask the Orchestrator to split it into its own task.
 
 - **Output:** Work Log entry (result first, files, skills loaded + trigger, evidence: `[FE_LINT_CMD]`, `[FE_TEST_CMD]`, `[FE_BUILD_CMD]` output, plus pro-rules checklist result if ui-ux-pro-max was used), status → `in_review`.
 
 ### Back-end Developer
-- **Scope:** `[BACKEND_DIR]/**` only, excluding migrations/schema (approval required).
+- **Scope:** `[BACKEND_DIR]/**` and your own task file, excluding migrations/schema (approval required). Never edit test files (see 3f). Draft migration SQL in `## Approvals Needed`; writing into the migrations directory prompts the human.
 - **Input:** a `claimed` BE task + `## Contracts`.
 - **Conflicts:** you fix merge conflicts in `[BACKEND_DIR]/**` only, per 3d.
 - **senior-fullstack use:** backend + API patterns in `architecture_patterns.md` (follow whichever the codebase already uses; do not introduce new layers); latency target from `## Goal`; common issues (N+1 → eager loading/DataLoader, CORS middleware).
@@ -219,14 +254,14 @@ How to use it — these rules OVERRIDE the skill's defaults:
 1. Tests MUST pass before you start. No tests cover the code → ask the Tester for characterization tests first (write it in `## Open Questions`) and stop.
 2. Touch only files listed in the task. No public API / contract signature changes.
 3. Never change behavior. Run `[BE_TEST_CMD]` after each step and record the result.
-4. NEVER commit (the skill's "atomic commits" step is disabled here; see Hard Rules).
+4. Make no separate refactor commits (the skill's "atomic commits" step is disabled here). Your changes go into the task's commit (3e).
 5. Delete dead code only if YOUR change made it dead. Report other dead code in `## Open Questions`.
 6. Refactor is bigger than the feature change itself → stop and ask the Orchestrator to split it into its own task.
 
 - **Output:** Work Log entry (result first, files, endpoints, skills loaded + trigger, evidence: `[BE_LINT_CMD]`, `[BE_TEST_CMD]` output, plus EXPLAIN before/after if sql-optimizer was used), status → `in_review`.
 
 ### Reviewer
-- **Scope:** read-only across the whole repo and PRs. NEVER edits code. The one allowed external write is posting its own review on a PR (3c).
+- **Scope:** read-only across the whole repo and PRs. NEVER edits code. It writes only its own task file; the one allowed external write is posting its own review on a PR (3c).
 - NEVER fix code yourself. Every finding goes back to the Owner via the Review → Fix Loop (3b).
 - **senior-fullstack use:** run `python3 ~/.claude/skills/senior-fullstack/scripts/code_quality_analyzer.py <changed dir> --verbose`. Any P0/critical security finding in changed code = BLOCKER. Findings in untouched code → Open Questions, not a blocker.
 - **Checks, in order:** (1) correctness vs acceptance + contract, (2) security (injection, authz, secret leaks), (3) every changed line traces to the task / no scope creep, (4) needless complexity, (5) common-issues checklist, (6) consistency with existing style.
@@ -252,7 +287,7 @@ How to use it — these rules shape its output to this board:
 - **Output:** findings in `## Review Findings` using the 3b format, max 5 per task ranked by severity. Any finding → recommend `changes_requested`. Otherwise `[T-ID] APPROVED`. No style-preference findings without concrete impact.
 
 ### Tester
-- **Scope:** `[TEST_DIR]/**` and running test commands. NEVER edits application code.
+- **Scope:** `[TEST_DIR]/**`, test files anywhere in the repo that match the test globs in `.claude/scope.json` (`*.test.*`, `*.spec.*`, `__tests__/`), your own task file, and running test commands. NEVER edits application code.
 - **Conflicts:** you fix merge conflicts in `[TEST_DIR]/**` only, per 3d.
 - NEVER fix code yourself. Every failure goes back to the Owner via the Review → Fix Loop (3b).
 - **senior-fullstack use:** testing strategy (unit / integration / E2E) per `development_workflows.md` — pick the lowest level that proves the acceptance criterion. Check the numeric targets from `## Goal` when the task affects them and a measurement command exists.

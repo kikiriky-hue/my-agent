@@ -1,6 +1,6 @@
 # my-agent
 
-**Multi-agent orchestrator-worker setup for Claude Code that uses a blackboard as shared state.** One Orchestrator splits the work and four role agents carry it out: Front-end Developer, Back-end Developer, Reviewer, and Tester. Every agent reads and writes through a single file, `.blackboard/BOARD.md`. It is the only source of truth, so chat history is never relied on.
+**Multi-agent orchestrator-worker setup for Claude Code that uses a blackboard as shared state.** One Orchestrator splits the work and four role agents carry it out: Front-end Developer, Back-end Developer, Reviewer, and Tester. Agents share state through the `.blackboard/` folder: the Orchestrator writes `BOARD.md`, and every task has its own file in `tasks/`. It is the only source of truth, so chat history is never relied on.
 
 Built-in principles:
 - **Karpathy guidelines:** think first, keep it simple, make targeted changes, work from verifiable goals.
@@ -8,7 +8,7 @@ Built-in principles:
 - **ADHD-friendly output:** the next action comes first, state is restated as `X/Y`, lists have at most 5 items, and every message ends with one concrete action.
 - **Security and PR review:** the Reviewer runs `security-review` on risky diffs, always on the PR diff, and posts its findings on the PR as comments.
 - **Branch discipline:** work happens on a feature branch, origin is pulled before every PR, and merge conflicts are fixed by the role that owns the files.
-- **Human approval** is required for risky actions such as deleting files, adding dependencies, changing schemas or migrations, commit/push, or opening and merging a PR.
+- **Human approval** is required for risky actions such as deleting files, adding dependencies, changing schemas or migrations, pushing, commits beyond the one-time per-task approval, or opening and merging a PR.
 
 ---
 
@@ -18,7 +18,13 @@ Built-in principles:
 |---|---|
 | [`AGENTS.md`](AGENTS.md) | Full spec: hard rules, skills, blackboard protocol, Review → Fix Loop, roles, stop conditions |
 | [`CLAUDE.md`](CLAUDE.md) | Imports `AGENTS.md` so Claude Code loads it automatically |
-| [`.blackboard/BOARD.md`](.blackboard/BOARD.md) | Empty blackboard template with the fixed sections |
+| [`.blackboard/BOARD.template.md`](.blackboard/BOARD.template.md) | Template for the shared board (written only by the Orchestrator) |
+| [`.blackboard/TASK.template.md`](.blackboard/TASK.template.md) | Template for one task file (Work Log, findings, test results) |
+| [`.claude/agents/`](.claude/agents) | The five roles as Claude Code agents (tool limits, role instructions) |
+| [`.claude/settings.json`](.claude/settings.json) | Registers the guard hook |
+| [`.claude/hooks/guard.py`](.claude/hooks/guard.py) | Enforces scope, approvals, and no-attribution rules before each tool call |
+| [`.claude/scope.json`](.claude/scope.json) | Which directories each role may write (fill in per project) |
+| [`.gitignore`](.gitignore) | Keeps the live board, task files, and archive out of git |
 
 ---
 
@@ -28,7 +34,7 @@ Built-in principles:
 flowchart TB
     H["👤 Human<br/><small>gives goal · answers grill · approves risky actions · receives final report</small>"]
     O["🧭 Orchestrator<br/><small>decomposes goal → tasks, writes Contracts, dispatches workers, routes Fix Loop<br/>does not write application code</small>"]
-    B[("📋 Blackboard<br/>.blackboard/BOARD.md<br/><small>Goal · Assumptions · Contracts · Tasks · Work Log<br/>Review Findings · Test Results · Open Questions<br/>Approvals Needed · Decisions</small>")]
+    B[("📋 Blackboard<br/>.blackboard/<br/><small>BOARD.md (Orchestrator only): Goal · Contracts · Tasks · Decisions<br/>tasks/T-ID.md (per task): Work Log · Review Findings · Test Results<br/>Open Questions · Approvals Needed</small>")]
     FE["🎨 Front-end Dev<br/><small>scope: FRONTEND_DIR</small>"]
     BE["⚙️ Back-end Dev<br/><small>scope: BACKEND_DIR (no migrations)</small>"]
     RV["🔍 Reviewer<br/><small>read-only · never fixes · posts PR review comments</small>"]
@@ -38,7 +44,7 @@ flowchart TB
     O -- "approvals & final report" --> H
     O -- "write Goal · Contracts · Tasks · Decisions" --> B
     O -. dispatch .-> FE & BE & RV & TS
-    FE & BE & RV & TS <-->|"read task & contract · write results + evidence"| B
+    FE & BE & RV & TS <-->|"read BOARD + task file · write own task file"| B
 
     classDef orch stroke:#3b82f6,stroke-width:2px
     classDef fe stroke:#14b8a6,stroke-width:2px
@@ -114,6 +120,12 @@ Every finding goes back to **the worker who did the task**. The Reviewer and Tes
 
 Maximum of **3 rounds** per task (review + test combined). Round 4 sets the task to `blocked` and escalates it to the human.
 
+### Blackboard layout & commits per task
+
+- `BOARD.md` has a single writer, the Orchestrator, so parallel agents never overwrite each other. Each task has its own file, `tasks/<T-ID>.md`, written only by the roles working that task. The Orchestrator mirrors statuses, questions, and approvals into `BOARD.md`.
+- `BOARD.md`, `tasks/`, and `archive/` are git-ignored, so PRs contain only real changes. Only the two templates are committed. A new goal archives the old board first.
+- You give a **one-time approval** for local commits on the feature branch. Each task is then one commit (`T-<ID>: <description>`), staged by path, and each fix is a new commit. The Reviewer reviews `git show <sha>` and re-reviews `git diff <prev>..<fix>`, so FE and BE diffs never mix. Pushing is never covered.
+
 ### Branch & sync
 
 - Work always happens on a feature branch (`<type>/<T-ID>-<slug>`), never on `main`. Creating the local branch needs no approval.
@@ -175,16 +187,39 @@ A worker may only change its own task's status in two ways: `todo → claimed` a
 | 2. Adding or upgrading dependencies | 2. Command fails 3× with the same error → stop |
 | 3. Schema, migrations, new indexes | 3. Goal, contract, or targets unclear → ask 1 question |
 | 4. CI/infra/env, scaffolder, `--persist` | 4. A claim without evidence = not done |
-| 5. `git commit` / `git push` (always from a feature branch, after pulling origin), open or merge a PR (the Reviewer's own review comments are the one exception; no `Co-Authored-By` or AI attribution) | 5. All done + evidence → report, **STOP** |
+| 5. `git push`, and `git commit` outside the one-time per-task approval (always from a feature branch, after pulling origin), open or merge a PR (the Reviewer's own review comments are the one exception; no `Co-Authored-By` or AI attribution) | 5. All done + evidence → report, **STOP** |
+
+---
+
+## 5. Enforcement
+
+The rules in `AGENTS.md` are backed by agents and a hook, so they hold even when a model is tempted to skip them.
+
+| Enforced by the hook | How |
+|---|---|
+| Role scope | Writes outside your directories, into another role's files, or to `.claude/`, `AGENTS.md`, `BOARD.md` are **denied**. |
+| Orchestrator writes no app code | It may write only under `.blackboard/`. |
+| Reviewer is read-only | It may write only its own task file. `git add/commit/checkout/reset`, `sed -i`, and redirects outside `.blackboard/tasks/` are denied. |
+| Test files belong to the Tester | FE and BE are denied on `*.test.*`, `*.spec.*`, `__tests__/` and the test directories. The Tester may edit them anywhere. |
+| No lost work | `git reset --hard`, `git checkout -- <file>`, `git clean`, `git add -A`/`.` are **denied**. |
+| No AI attribution | `Co-Authored-By` or "Generated with" in a commit, PR, or comment is **denied**. |
+| PR limits | Merging, approving, and requesting changes are denied. Only the Reviewer may post reviews and comments. |
+| Needs you | Push, force-push, `gh pr create`, rebase/amend, deleting files, new dependencies, migrations, and CI/infra/env files **ask you first**. |
+
+**Limits:**
+- Bash checks are best-effort hardening, not a sandbox.
+- The hook acts only when Claude Code reports the agent name (`agent_type`) as one of the five roles. Plain sessions are never touched. I could only test the hook with synthetic inputs, so run the check in Usage step 6 once.
+- Project hooks and agents need you to trust the folder the first time.
 
 ---
 
 ## Usage
 
-1. Copy `AGENTS.md`, `CLAUDE.md`, and `.blackboard/BOARD.md` to the root of your project repo.
-2. In `AGENTS.md`, replace the placeholders `[FRONTEND_DIR]`, `[BACKEND_DIR]`, `[TEST_DIR]`, `[TEST_CMD]`, `[FE_LINT_CMD]`, `[FE_TEST_CMD]`, `[FE_BUILD_CMD]`, `[BE_LINT_CMD]`, and `[BE_TEST_CMD]`.
+1. Copy `AGENTS.md`, `CLAUDE.md`, `.gitignore` (or its three `.blackboard` lines), the `.blackboard/` templates, and the `.claude/` folder to the root of your project repo. The Orchestrator creates `BOARD.md` from the template when a goal starts.
+2. In `AGENTS.md`, replace the placeholders `[FRONTEND_DIR]`, `[BACKEND_DIR]`, `[TEST_DIR]`, `[TEST_CMD]`, `[FE_LINT_CMD]`, `[FE_TEST_CMD]`, `[FE_BUILD_CMD]`, `[BE_LINT_CMD]`, and `[BE_TEST_CMD]`. Then fill `.claude/scope.json` with the same directories (`frontend_dirs`, `backend_dirs`, `test_dirs`, `migration_dirs`). An unfilled scope blocks the workers.
 3. Make sure these skills are installed in `~/.claude/skills/`: `senior-fullstack`, `ui-ux-pro-max`, `sql-optimizer`, `refactor`. `security-review` comes with Claude Code. Karpathy guidelines and the ADHD output style are already written into `AGENTS.md`.
 4. For PR review, install the GitHub CLI and log in with `gh auth login`. The Reviewer reads and comments on PRs through `gh`, so comments appear under that account.
-5. Open Claude Code in the project, then give it a goal. For example: *"Act as the Orchestrator per AGENTS.md. Goal: add a login page with an email + password API."*
+5. Start the team with `claude --agent orchestrator` in the project, trust the folder when asked, then give it a goal. For example: *"Goal: add a login page with an email + password API."*
+6. Check the guard once: ask the Reviewer agent to create a file under your backend directory. It must be blocked. If it is not, the agent name differs from the five role names, so check `agent_type` in the hook input.
 
 > ⚠️ This setup runs agents with real access to your filesystem and terminal. Before using it, check the scope of each role, the actions that require approval, and the stop conditions.
