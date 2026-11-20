@@ -20,6 +20,11 @@ Built-in principles:
 | [`CLAUDE.md`](CLAUDE.md) | Imports `AGENTS.md` so Claude Code loads it automatically |
 | [`.blackboard/BOARD.template.md`](.blackboard/BOARD.template.md) | Template for the shared board (written only by the Orchestrator) |
 | [`.blackboard/TASK.template.md`](.blackboard/TASK.template.md) | Template for one task file (Work Log, findings, test results) |
+| [`.claude/agents/`](.claude/agents) | The five roles as Claude Code agents (tool limits, role instructions) |
+| [`.claude/settings.json`](.claude/settings.json) | Registers the guard hook |
+| [`.claude/hooks/guard.py`](.claude/hooks/guard.py) | Enforces scope, approvals, and no-attribution rules before each tool call |
+| [`.claude/scope.json`](.claude/scope.json) | The only project-specific file: base branch, directories each role may write, test/lint/build commands |
+| [`install.py`](install.py) | Installs or updates the team in another project without overwriting your files |
 | [`.gitignore`](.gitignore) | Keeps the live board, task files, and archive out of git |
 
 ---
@@ -124,8 +129,8 @@ Maximum of **3 rounds** per task (review + test combined). Round 4 sets the task
 
 ### Branch & sync
 
-- Work always happens on a feature branch (`<type>/<T-ID>-<slug>`), never on `main`. Creating the local branch needs no approval.
-- Before every PR and re-push, the Orchestrator runs `git fetch origin` and `git pull origin main` into the branch. No rebase or force-push without your approval.
+- Work always happens on a feature branch (`<type>/<T-ID>-<slug>`), never on the base branch (`base_branch` in `.claude/scope.json`, usually `main`). Creating the local branch needs no approval.
+- Before every PR and re-push, the Orchestrator runs `git fetch origin` and `git pull origin <base_branch>` into the branch. No rebase or force-push without your approval.
 - A conflict goes to the role that owns the file: `FRONTEND_DIR` to Front-end, `BACKEND_DIR` to Back-end, `TEST_DIR` to Tester. Files outside any role go to you.
 - The fixing role only touches the conflict hunks in its own files, keeps both sides' intent, and runs its tests. Then the Tester re-runs the tests and the Reviewer re-reviews only the resolution diff.
 - `git reset --hard`, `git checkout -- <file>`, and `git push --force` are never used to make a conflict disappear.
@@ -187,12 +192,46 @@ A worker may only change its own task's status in two ways: `todo → claimed` a
 
 ---
 
-## Usage
+## 5. Enforcement
 
-1. Copy `AGENTS.md`, `CLAUDE.md`, `.gitignore` (or its three `.blackboard` lines), and the `.blackboard/` templates to the root of your project repo. The Orchestrator creates `BOARD.md` from the template when a goal starts.
-2. In `AGENTS.md`, replace the placeholders `[FRONTEND_DIR]`, `[BACKEND_DIR]`, `[TEST_DIR]`, `[TEST_CMD]`, `[FE_LINT_CMD]`, `[FE_TEST_CMD]`, `[FE_BUILD_CMD]`, `[BE_LINT_CMD]`, and `[BE_TEST_CMD]`.
-3. Make sure these skills are installed in `~/.claude/skills/`: `senior-fullstack`, `ui-ux-pro-max`, `sql-optimizer`, `refactor`. `security-review` comes with Claude Code. Karpathy guidelines and the ADHD output style are already written into `AGENTS.md`.
-4. For PR review, install the GitHub CLI and log in with `gh auth login`. The Reviewer reads and comments on PRs through `gh`, so comments appear under that account.
-5. Open Claude Code in the project, then give it a goal. For example: *"Act as the Orchestrator per AGENTS.md. Goal: add a login page with an email + password API."*
+The rules in `AGENTS.md` are backed by agents and a hook, so they hold even when a model is tempted to skip them.
+
+| Enforced by the hook | How |
+|---|---|
+| Role scope | Writes outside your directories, into another role's files, or to `.claude/`, `AGENTS.md`, `BOARD.md` are **denied**. |
+| Orchestrator writes no app code | It may write only under `.blackboard/`. |
+| Reviewer is read-only | It may write only its own task file. `git add/commit/checkout/reset`, `sed -i`, and redirects outside `.blackboard/tasks/` are denied. |
+| Test files belong to the Tester | FE and BE are denied on `*.test.*`, `*.spec.*`, `__tests__/` and the test directories. The Tester may edit them anywhere. |
+| No lost work | `git reset --hard`, `git checkout -- <file>`, `git clean`, `git add -A`/`.` are **denied**. |
+| No AI attribution | `Co-Authored-By` or "Generated with" in a commit, PR, or comment is **denied**. |
+| PR limits | Merging, approving, and requesting changes are denied. Only the Reviewer may post reviews and comments. |
+| Needs you | Push, force-push, `gh pr create`, rebase/amend, deleting files, new dependencies, migrations, and CI/infra/env files **ask you first**. |
+
+**Limits:**
+- Bash checks are best-effort hardening, not a sandbox.
+- The hook acts only when Claude Code reports the agent name (`agent_type`) as one of the five roles. Plain sessions are never touched. I could only test the hook with synthetic inputs, so run the guard check from "Use it in another project" once.
+- Project hooks and agents need you to trust the folder the first time.
+
+---
+
+## Use it in another project
+
+The team files are the same in every project. The only project-specific file is `.claude/scope.json`.
+
+**Prepare once per machine**
+1. `python3`, `git`, and the GitHub CLI (`gh`) installed.
+2. `gh auth login` for every GitHub account you use. Before a project's first review, run `gh auth switch -u <account>` so the Reviewer comments as the right account.
+3. These skills in `~/.claude/skills/`: `senior-fullstack`, `ui-ux-pro-max`, `sql-optimizer`, `refactor`. `security-review` comes with Claude Code. A missing skill is noted in Open Questions and skipped.
+4. Check your global gitignore with `git check-ignore -v CLAUDE.md` inside a project. If it ignores `CLAUDE.md`, commit it with `git add -f CLAUDE.md`, or teammates will not get it.
+
+**Prepare per project**
+1. Run `python3 /path/to/my-agent/install.py /path/to/project` (add `--dry-run` first to see the plan). It copies the team files, merges `.gitignore`, `CLAUDE.md`, and the hook in `.claude/settings.json`, and never overwrites your files. A file that already exists and differs, such as your own `AGENTS.md`, is reported as `CONFLICT` and left alone.
+2. Fill `.claude/scope.json`: `frontend_dirs`, `backend_dirs`, `test_dirs`, `migration_dirs`, and the `commands` (tests, lint, build). `base_branch` is detected. The installer lists directories it recognizes. Backend-only project: leave `frontend_dirs` empty. An unfilled scope blocks the workers.
+3. Commit the new files on a feature branch, including `.claude/team-install.json`, and open a PR as usual.
+4. Start `claude --agent orchestrator` in the project and trust the folder when asked.
+5. Check the guard once: ask the Reviewer agent to create a file under your backend directory. It must be blocked. If it is not, the agent name differs from the five role names, so check `agent_type` in the hook input.
+6. Give it a goal. For example: *"Goal: add a login page with an email + password API."*
+
+**Update later:** `git pull` in this repo, then `python3 install.py /path/to/project --update`. It overwrites only files you have not changed. A file you edited is reported as `CONFLICT` and left alone. `scope.json` is never touched.
 
 > ⚠️ This setup runs agents with real access to your filesystem and terminal. Before using it, check the scope of each role, the actions that require approval, and the stop conditions.

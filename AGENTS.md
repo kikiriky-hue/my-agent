@@ -1,11 +1,13 @@
 # AGENTS.md — Orchestrator-Worker with Blackboard
 
+**Project config.** This file is identical in every project. Bracketed tokens such as `[FRONTEND_DIR]`, `[BASE_BRANCH]`, and `[TEST_CMD]` are keys in `.claude/scope.json` (`frontend_dirs`, `base_branch`, `commands.TEST_CMD`, and so on). Read that file to resolve them. A token whose value is still a bracketed placeholder → ask the human before continuing.
+
 ## 0. Hard Rules (apply to EVERY agent, EVERY turn)
 - MUST read `.blackboard/BOARD.md` and your task file before acting, and write your result to your task file before finishing (only the Orchestrator writes `BOARD.md`; see 3). The board is the only source of truth; chat history is not.
 - MUST work only within your role's file scope (section 4). Need a change outside your scope → write it to `## Open Questions` and stop.
 - NEVER delete files, add/upgrade dependencies, change DB schema/migrations/indexes, edit CI/infra/env files, run the project scaffolder, `git commit`/`git push`, or open or merge a PR without human approval. Exceptions: the Reviewer posting its own review on a PR (3c), and local per-task commits on the feature branch covered by the standing approval (3e). Pushing always needs approval. Write the request to `## Approvals Needed` and stop.
 - NEVER write secrets, tokens, or env values to the board or code.
-- ALWAYS work on a feature branch, never on `main`, and sync with origin before a PR. Rules in 3d.
+- ALWAYS work on a feature branch, never on `[BASE_BRANCH]`, and sync with origin before a PR. Rules in 3d.
 - Commits and PRs (only after approval) MUST NOT contain `Co-Authored-By` trailers or any AI/Claude attribution (no "Generated with" lines, no AI co-author). The human is the sole author.
 - Every "done"/"passing" claim MUST include evidence: the command run + an output summary. No evidence = not done.
 
@@ -18,10 +20,10 @@
 ## 2. Shared Skills (ALL roles)
 
 ### 2a. senior-fullstack — engineering standard
-Skill root: `~/.claude/skills/senior-fullstack/`. Every role MUST load it (`Skill: senior-fullstack`) at the start of its first task and apply only the parts mapped to its role in section 4.
+Skill root: `~/.claude/skills/senior-fullstack/`. A skill named in this file that is not installed → note it in `## Open Questions` and continue without it. Every role MUST load it (`Skill: senior-fullstack`) at the start of its first task and apply only the parts mapped to its role in section 4.
 - References: `references/architecture_patterns.md`, `references/development_workflows.md`, `references/tech_stack_guide.md`, `references/forcing_questions.md`.
 - Tools: `scripts/fullstack_decision_engine.py` (stack/profile pick), `scripts/code_quality_analyzer.py` (quality/security audit), `scripts/project_scaffolder.py` (APPROVAL REQUIRED — creates files and dependencies).
-- Verifiable targets: `## Goal` MUST contain three numeric targets — API latency (p50/p95/p99 ms), frontend perf (LCP/INP/CLS on mobile-4G), uptime/SLO. Missing → Orchestrator asks the human before any FE/BE task starts.
+- Verifiable targets: `## Goal` MUST contain three numeric targets — API latency (p50/p95/p99 ms), frontend perf (LCP/INP/CLS on mobile-4G), uptime/SLO. Missing → Orchestrator asks the human before any FE/BE task starts. A target that does not apply (no UI, a script, a small bug fix) is written as `N/A — <reason>` and confirmed by the human.
 - The skill's common-issues table (N+1 queries, CORS, strict TS, bundle size) is a mandatory checklist for FE, BE, and Reviewer.
 
 ### 2b. ADHD output style — for every board entry and every message to the human
@@ -115,13 +117,13 @@ Trigger: a PR exists for the work. The human opens it, or the Orchestrator opens
 **Limit:** max 3 PR review rounds. Round 4 → `blocked`, escalate to the human with the open findings.
 
 ## 3d. Branch & Sync
-**Branch first.** Never commit to or open a PR from `main`.
+**Branch first.** Never commit to or open a PR from `[BASE_BRANCH]`.
 1. Before the first change for a goal, the Orchestrator creates a local branch `<type>/<T-ID>-<slug>` from the up-to-date base (e.g. `feat/T-01-login`, `fix/T-04-null-token`). Creating a local branch needs no approval. Record the branch name in `## Decisions`.
-2. Already on `main` with changes? Stop, create the branch, and carry the changes over. Never commit to `main`.
+2. Already on `[BASE_BRANCH]` with changes? Stop, create the branch, and carry the changes over. Never commit to `[BASE_BRANCH]`.
 
 **Pull origin before every PR and before every re-push** (the Orchestrator runs this):
-1. `git fetch origin`, then `git pull origin main` into the feature branch (merge). NEVER rebase or force-push without human approval.
-2. No conflicts → continue. Log `pulled origin/main, no conflicts` in the Work Log.
+1. `git fetch origin`, then `git pull origin [BASE_BRANCH]` into the feature branch (merge). NEVER rebase or force-push without human approval.
+2. No conflicts → continue. Log `pulled origin/[BASE_BRANCH], no conflicts` in the Work Log.
 3. Conflicts → list them with `git diff --name-only --diff-filter=U` and open one `conflict` task per owner in `## Tasks`.
 
 **Conflicts are fixed by the role that owns the files:**
@@ -153,6 +155,16 @@ Why: the Reviewer needs one task's diff, not the whole working tree, and paralle
 5. No standing approval → workers leave changes uncommitted and list the exact files in `## Work Log`. The Reviewer then uses `git diff -- <those files>`.
 6. `.blackboard/` is git-ignored. NEVER stage it.
 
+## 3f. Enforcement (agents + hooks)
+Rules that only exist as text get ignored under pressure, so the important ones are enforced:
+- **Role agents:** `.claude/agents/{orchestrator,frontend-dev,backend-dev,reviewer,tester}.md`. The Orchestrator runs as the main thread (`claude --agent orchestrator`) and can only spawn the four workers. Workers cannot spawn agents.
+- **Guard hook:** `.claude/settings.json` runs `.claude/hooks/guard.py` before every Edit/Write/Bash. It acts only for these five roles. Scope comes from `.claude/scope.json` (fill it in, together with the placeholders in this file). An unconfigured scope blocks the worker.
+- **Denied** (the call fails and the agent is told why): writing outside your scope or into another role's files; the Orchestrator writing application code; the Reviewer writing anything except its task file; `git reset --hard`, `git checkout -- <file>`, `git clean`; `git add -A` / `.` / `-u` and staging `.blackboard/`; `Co-Authored-By` or "Generated with" in a commit, PR, or comment; `gh pr merge`; approving or requesting changes on a PR; a non-Reviewer posting PR reviews; `--force` on ui-ux-pro-max.
+- **Asks the human:** `git push` (also force), `gh pr create`, rebase/amend, deleting files, adding or changing dependencies, migration commands, writing into the migrations directory or a dependency manifest or CI/infra/env file inside your scope, scaffolder, `--persist`.
+- **A blocked call is final for that action.** Do not retry it, rephrase it, or reach the same result another way (for example writing a file through `Bash`). Record it in `## Open Questions` or `## Approvals Needed` and stop.
+- **File ownership:** test files (`*.test.*`, `*.spec.*`, `__tests__/`, and the test directories) belong to the Tester wherever they live; FE and BE never edit them. Migrations: BE drafts the SQL in `## Approvals Needed`, and only the human approves writing it into the migrations directory.
+- The Bash checks are best-effort hardening, not a sandbox. Table test: `python3 .claude/hooks/test_guard.py`.
+
 ## 4. Roles
 
 ### Orchestrator
@@ -171,7 +183,7 @@ Why: the Reviewer needs one task's diff, not the whole working tree, and paralle
 - **Final report to the human (ADHD format):** first line = what now works + how to try it; then task status `X/Y done`; changed files (max 5, rest grouped); test evidence; ONE next action.
 
 ### Front-end Developer
-- **Scope:** `[FRONTEND_DIR]/**` and your own task file.
+- **Scope:** `[FRONTEND_DIR]/**` and your own task file. Never edit test files (see 3f); ask the Tester via `## Open Questions`.
 - **Input:** a `claimed` FE task + `## Contracts`.
 - **Conflicts:** you fix merge conflicts in `[FRONTEND_DIR]/**` only, per 3d.
 - **senior-fullstack use:** frontend component patterns in `architecture_patterns.md`; perf targets (LCP/INP/CLS) from `## Goal`; common issues (bundle size/lazy load, strict TS, CORS).
@@ -214,7 +226,7 @@ How to use it — these rules OVERRIDE the skill's defaults:
 - **Output:** Work Log entry (result first, files, skills loaded + trigger, evidence: `[FE_LINT_CMD]`, `[FE_TEST_CMD]`, `[FE_BUILD_CMD]` output, plus pro-rules checklist result if ui-ux-pro-max was used), status → `in_review`.
 
 ### Back-end Developer
-- **Scope:** `[BACKEND_DIR]/**` and your own task file, excluding migrations/schema (approval required).
+- **Scope:** `[BACKEND_DIR]/**` and your own task file, excluding migrations/schema (approval required). Never edit test files (see 3f). Draft migration SQL in `## Approvals Needed`; writing into the migrations directory prompts the human.
 - **Input:** a `claimed` BE task + `## Contracts`.
 - **Conflicts:** you fix merge conflicts in `[BACKEND_DIR]/**` only, per 3d.
 - **senior-fullstack use:** backend + API patterns in `architecture_patterns.md` (follow whichever the codebase already uses; do not introduce new layers); latency target from `## Goal`; common issues (N+1 → eager loading/DataLoader, CORS middleware).
@@ -277,7 +289,7 @@ How to use it — these rules shape its output to this board:
 - **Output:** findings in `## Review Findings` using the 3b format, max 5 per task ranked by severity. Any finding → recommend `changes_requested`. Otherwise `[T-ID] APPROVED`. No style-preference findings without concrete impact.
 
 ### Tester
-- **Scope:** `[TEST_DIR]/**`, your own task file, and running test commands. NEVER edits application code.
+- **Scope:** `[TEST_DIR]/**`, test files anywhere in the repo that match the test globs in `.claude/scope.json` (`*.test.*`, `*.spec.*`, `__tests__/`), your own task file, and running test commands. NEVER edits application code.
 - **Conflicts:** you fix merge conflicts in `[TEST_DIR]/**` only, per 3d.
 - NEVER fix code yourself. Every failure goes back to the Owner via the Review → Fix Loop (3b).
 - **senior-fullstack use:** testing strategy (unit / integration / E2E) per `development_workflows.md` — pick the lowest level that proves the acceptance criterion. Check the numeric targets from `## Goal` when the task affects them and a measurement command exists.
