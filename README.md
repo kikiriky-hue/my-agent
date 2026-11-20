@@ -20,6 +20,10 @@ Built-in principles:
 | [`CLAUDE.md`](CLAUDE.md) | Imports `AGENTS.md` so Claude Code loads it automatically |
 | [`.blackboard/BOARD.template.md`](.blackboard/BOARD.template.md) | Template for the shared board (written only by the Orchestrator) |
 | [`.blackboard/TASK.template.md`](.blackboard/TASK.template.md) | Template for one task file (Work Log, findings, test results) |
+| [`.claude/agents/`](.claude/agents) | The five roles as Claude Code agents (tool limits, role instructions) |
+| [`.claude/settings.json`](.claude/settings.json) | Registers the guard hook |
+| [`.claude/hooks/guard.py`](.claude/hooks/guard.py) | Enforces scope, approvals, and no-attribution rules before each tool call |
+| [`.claude/scope.json`](.claude/scope.json) | Which directories each role may write (fill in per project) |
 | [`.gitignore`](.gitignore) | Keeps the live board, task files, and archive out of git |
 
 ---
@@ -187,12 +191,35 @@ A worker may only change its own task's status in two ways: `todo → claimed` a
 
 ---
 
+## 5. Enforcement
+
+The rules in `AGENTS.md` are backed by agents and a hook, so they hold even when a model is tempted to skip them.
+
+| Enforced by the hook | How |
+|---|---|
+| Role scope | Writes outside your directories, into another role's files, or to `.claude/`, `AGENTS.md`, `BOARD.md` are **denied**. |
+| Orchestrator writes no app code | It may write only under `.blackboard/`. |
+| Reviewer is read-only | It may write only its own task file. `git add/commit/checkout/reset`, `sed -i`, and redirects outside `.blackboard/tasks/` are denied. |
+| Test files belong to the Tester | FE and BE are denied on `*.test.*`, `*.spec.*`, `__tests__/` and the test directories. The Tester may edit them anywhere. |
+| No lost work | `git reset --hard`, `git checkout -- <file>`, `git clean`, `git add -A`/`.` are **denied**. |
+| No AI attribution | `Co-Authored-By` or "Generated with" in a commit, PR, or comment is **denied**. |
+| PR limits | Merging, approving, and requesting changes are denied. Only the Reviewer may post reviews and comments. |
+| Needs you | Push, force-push, `gh pr create`, rebase/amend, deleting files, new dependencies, migrations, and CI/infra/env files **ask you first**. |
+
+**Limits:**
+- Bash checks are best-effort hardening, not a sandbox.
+- The hook acts only when Claude Code reports the agent name (`agent_type`) as one of the five roles. Plain sessions are never touched. I could only test the hook with synthetic inputs, so run the check in Usage step 6 once.
+- Project hooks and agents need you to trust the folder the first time.
+
+---
+
 ## Usage
 
-1. Copy `AGENTS.md`, `CLAUDE.md`, `.gitignore` (or its three `.blackboard` lines), and the `.blackboard/` templates to the root of your project repo. The Orchestrator creates `BOARD.md` from the template when a goal starts.
-2. In `AGENTS.md`, replace the placeholders `[FRONTEND_DIR]`, `[BACKEND_DIR]`, `[TEST_DIR]`, `[TEST_CMD]`, `[FE_LINT_CMD]`, `[FE_TEST_CMD]`, `[FE_BUILD_CMD]`, `[BE_LINT_CMD]`, and `[BE_TEST_CMD]`.
+1. Copy `AGENTS.md`, `CLAUDE.md`, `.gitignore` (or its three `.blackboard` lines), the `.blackboard/` templates, and the `.claude/` folder to the root of your project repo. The Orchestrator creates `BOARD.md` from the template when a goal starts.
+2. In `AGENTS.md`, replace the placeholders `[FRONTEND_DIR]`, `[BACKEND_DIR]`, `[TEST_DIR]`, `[TEST_CMD]`, `[FE_LINT_CMD]`, `[FE_TEST_CMD]`, `[FE_BUILD_CMD]`, `[BE_LINT_CMD]`, and `[BE_TEST_CMD]`. Then fill `.claude/scope.json` with the same directories (`frontend_dirs`, `backend_dirs`, `test_dirs`, `migration_dirs`). An unfilled scope blocks the workers.
 3. Make sure these skills are installed in `~/.claude/skills/`: `senior-fullstack`, `ui-ux-pro-max`, `sql-optimizer`, `refactor`. `security-review` comes with Claude Code. Karpathy guidelines and the ADHD output style are already written into `AGENTS.md`.
 4. For PR review, install the GitHub CLI and log in with `gh auth login`. The Reviewer reads and comments on PRs through `gh`, so comments appear under that account.
-5. Open Claude Code in the project, then give it a goal. For example: *"Act as the Orchestrator per AGENTS.md. Goal: add a login page with an email + password API."*
+5. Start the team with `claude --agent orchestrator` in the project, trust the folder when asked, then give it a goal. For example: *"Goal: add a login page with an email + password API."*
+6. Check the guard once: ask the Reviewer agent to create a file under your backend directory. It must be blocked. If it is not, the agent name differs from the five role names, so check `agent_type` in the hook input.
 
 > ⚠️ This setup runs agents with real access to your filesystem and terminal. Before using it, check the scope of each role, the actions that require approval, and the stop conditions.

@@ -1,0 +1,7 @@
+{
+  "frontend_dirs": ["[FRONTEND_DIR]"],
+  "backend_dirs": ["[BACKEND_DIR]"],
+  "test_dirs": ["[TEST_DIR]"],
+  "migration_dirs": ["[MIGRATIONS_DIR]"],
+  "test_globs": ["*.test.*", "*.spec.*", "test_*.py", "*_test.py", "*_test.go", "*/__tests__/*", "__tests__/*"]
+}

@@ -153,6 +153,16 @@ Why: the Reviewer needs one task's diff, not the whole working tree, and paralle
 5. No standing approval → workers leave changes uncommitted and list the exact files in `## Work Log`. The Reviewer then uses `git diff -- <those files>`.
 6. `.blackboard/` is git-ignored. NEVER stage it.
 
+## 3f. Enforcement (agents + hooks)
+Rules that only exist as text get ignored under pressure, so the important ones are enforced:
+- **Role agents:** `.claude/agents/{orchestrator,frontend-dev,backend-dev,reviewer,tester}.md`. The Orchestrator runs as the main thread (`claude --agent orchestrator`) and can only spawn the four workers. Workers cannot spawn agents.
+- **Guard hook:** `.claude/settings.json` runs `.claude/hooks/guard.py` before every Edit/Write/Bash. It acts only for these five roles. Scope comes from `.claude/scope.json` (fill it in, together with the placeholders in this file). An unconfigured scope blocks the worker.
+- **Denied** (the call fails and the agent is told why): writing outside your scope or into another role's files; the Orchestrator writing application code; the Reviewer writing anything except its task file; `git reset --hard`, `git checkout -- <file>`, `git clean`; `git add -A` / `.` / `-u` and staging `.blackboard/`; `Co-Authored-By` or "Generated with" in a commit, PR, or comment; `gh pr merge`; approving or requesting changes on a PR; a non-Reviewer posting PR reviews; `--force` on ui-ux-pro-max.
+- **Asks the human:** `git push` (also force), `gh pr create`, rebase/amend, deleting files, adding or changing dependencies, migration commands, writing into the migrations directory or a dependency manifest or CI/infra/env file inside your scope, scaffolder, `--persist`.
+- **A blocked call is final for that action.** Do not retry it, rephrase it, or reach the same result another way (for example writing a file through `Bash`). Record it in `## Open Questions` or `## Approvals Needed` and stop.
+- **File ownership:** test files (`*.test.*`, `*.spec.*`, `__tests__/`, and the test directories) belong to the Tester wherever they live; FE and BE never edit them. Migrations: BE drafts the SQL in `## Approvals Needed`, and only the human approves writing it into the migrations directory.
+- The Bash checks are best-effort hardening, not a sandbox. Table test: `python3 .claude/hooks/test_guard.py`.
+
 ## 4. Roles
 
 ### Orchestrator
@@ -171,7 +181,7 @@ Why: the Reviewer needs one task's diff, not the whole working tree, and paralle
 - **Final report to the human (ADHD format):** first line = what now works + how to try it; then task status `X/Y done`; changed files (max 5, rest grouped); test evidence; ONE next action.
 
 ### Front-end Developer
-- **Scope:** `[FRONTEND_DIR]/**` and your own task file.
+- **Scope:** `[FRONTEND_DIR]/**` and your own task file. Never edit test files (see 3f); ask the Tester via `## Open Questions`.
 - **Input:** a `claimed` FE task + `## Contracts`.
 - **Conflicts:** you fix merge conflicts in `[FRONTEND_DIR]/**` only, per 3d.
 - **senior-fullstack use:** frontend component patterns in `architecture_patterns.md`; perf targets (LCP/INP/CLS) from `## Goal`; common issues (bundle size/lazy load, strict TS, CORS).
@@ -214,7 +224,7 @@ How to use it — these rules OVERRIDE the skill's defaults:
 - **Output:** Work Log entry (result first, files, skills loaded + trigger, evidence: `[FE_LINT_CMD]`, `[FE_TEST_CMD]`, `[FE_BUILD_CMD]` output, plus pro-rules checklist result if ui-ux-pro-max was used), status → `in_review`.
 
 ### Back-end Developer
-- **Scope:** `[BACKEND_DIR]/**` and your own task file, excluding migrations/schema (approval required).
+- **Scope:** `[BACKEND_DIR]/**` and your own task file, excluding migrations/schema (approval required). Never edit test files (see 3f). Draft migration SQL in `## Approvals Needed`; writing into the migrations directory prompts the human.
 - **Input:** a `claimed` BE task + `## Contracts`.
 - **Conflicts:** you fix merge conflicts in `[BACKEND_DIR]/**` only, per 3d.
 - **senior-fullstack use:** backend + API patterns in `architecture_patterns.md` (follow whichever the codebase already uses; do not introduce new layers); latency target from `## Goal`; common issues (N+1 → eager loading/DataLoader, CORS middleware).
@@ -277,7 +287,7 @@ How to use it — these rules shape its output to this board:
 - **Output:** findings in `## Review Findings` using the 3b format, max 5 per task ranked by severity. Any finding → recommend `changes_requested`. Otherwise `[T-ID] APPROVED`. No style-preference findings without concrete impact.
 
 ### Tester
-- **Scope:** `[TEST_DIR]/**`, your own task file, and running test commands. NEVER edits application code.
+- **Scope:** `[TEST_DIR]/**`, test files anywhere in the repo that match the test globs in `.claude/scope.json` (`*.test.*`, `*.spec.*`, `__tests__/`), your own task file, and running test commands. NEVER edits application code.
 - **Conflicts:** you fix merge conflicts in `[TEST_DIR]/**` only, per 3d.
 - NEVER fix code yourself. Every failure goes back to the Owner via the Review → Fix Loop (3b).
 - **senior-fullstack use:** testing strategy (unit / integration / E2E) per `development_workflows.md` — pick the lowest level that proves the acceptance criterion. Check the numeric targets from `## Goal` when the task affects them and a measurement command exists.
